@@ -1,3 +1,32 @@
+"""
+Email Processor for Hotel-Related Communications
+
+This module processes MBOX email files to identify and extract information about hotel-related 
+communications. It uses LM Studio with Mistral-7B for email classification and the Google Places 
+API for fetching additional hotel details.
+
+Key Features:
+- Processes large MBOX files in manageable chunks
+- Uses AI for intelligent email classification
+- Extracts hotel names and contact information
+- Integrates with Google Places API
+- Maintains a SQLite database
+- Exports results to CSV
+- Supports batch processing for GPU efficiency
+
+Dependencies:
+- LM Studio running locally with Mistral-7B model
+- Google Places API key
+- Python packages: sqlalchemy, requests, python-decouple, tqdm, etc.
+
+Environment Variables:
+- MBOX_FILE: Path to the MBOX file
+- OUTPUT_CSV: Path for the output CSV file
+- GOOGLE_PLACES_API_KEY: Google Places API key
+- LM_STUDIO_API_URL: URL for LM Studio API
+- LM_STUDIO_MODEL: Name of the LM Studio model to use
+"""
+
 import os
 import mailbox
 import re
@@ -16,12 +45,12 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship, scoped_session
 from sqlalchemy.exc import SQLAlchemyError
 
-# Constants for processing
-CHUNK_SIZE_MB = 100  # Size of each chunk in MB
-BATCH_SIZE = 4      # Number of emails to process in one GPU batch
-GPU_MEMORY = 4096   # Memory to allocate for GPU in MB (4GB for Mistral)
+# Processing configuration constants
+CHUNK_SIZE_MB = 100  # Size of each chunk in MB for memory-efficient processing
+BATCH_SIZE = 4      # Number of emails to process in one GPU batch for optimal throughput
+GPU_MEMORY = 4096   # Memory to allocate for GPU in MB (4GB for Mistral model)
 
-# Set up logging
+# Configure logging with timestamp, level, and message format
 logging.basicConfig(
     filename='email_processor.log',
     level=logging.INFO,
@@ -34,6 +63,19 @@ engine = create_engine('sqlite:///email_processing.db')
 Session = sessionmaker(bind=engine)
 
 class ProcessedEmail(Base):
+    """
+    SQLAlchemy model for tracking processed emails.
+    
+    Stores information about each processed email including its processing status
+    and any errors encountered during processing.
+    
+    Attributes:
+        id: Unique identifier for the record
+        message_id: Email's Message-ID header (unique)
+        date_processed: Timestamp of when the email was processed
+        is_hotel_related: Whether the email was classified as hotel-related
+        error: Any error message encountered during processing
+    """
     __tablename__ = 'processed_emails'
     id = Column(Integer, primary_key=True)
     message_id = Column(String, unique=True)
@@ -42,6 +84,24 @@ class ProcessedEmail(Base):
     error = Column(Text, nullable=True)
 
 class Contact(Base):
+    """
+    SQLAlchemy model for storing contact information extracted from emails.
+    
+    Maintains a record of contacts and their associated hotel information,
+    including details fetched from Google Places API.
+    
+    Attributes:
+        id: Unique identifier for the contact
+        email: Contact's email address (unique)
+        display_name: Contact's display name from email
+        hotel_name: Associated hotel name
+        website: Hotel's website
+        address: Hotel's physical address
+        coordinates: Hotel's geographical coordinates
+        contact: Contact information (phone, etc.)
+        subjects: JSON array of email subjects
+        dates: JSON array of communication dates
+    """
     __tablename__ = 'contacts'
     id = Column(Integer, primary_key=True)
     email = Column(String, unique=True)
@@ -51,8 +111,8 @@ class Contact(Base):
     address = Column(String)
     coordinates = Column(String)
     contact = Column(String)
-    subjects = Column(Text)  # Stored as JSON
-    dates = Column(Text)     # Stored as JSON
+    subjects = Column(Text)  # Stored as JSON array
+    dates = Column(Text)     # Stored as JSON array
 
 # Create database tables
 Base.metadata.create_all(engine)
@@ -66,7 +126,18 @@ LM_STUDIO_MODEL = config("LM_STUDIO_MODEL", default="mistral-7b-instruct-v0.2")
 
 
 def get_total_emails(mbox_path):
-    """Count total number of emails in the mbox file."""
+    """
+    Count the total number of emails in the mbox file.
+    
+    Args:
+        mbox_path (str): Path to the MBOX file
+        
+    Returns:
+        int: Total number of emails in the file, or 0 if file is invalid
+        
+    This function performs basic validation of the MBOX file and provides
+    progress updates during counting for large files.
+    """
     try:
         if not os.path.exists(mbox_path):
             print(f"Error: Mbox file not found at {mbox_path}")
@@ -98,11 +169,30 @@ def get_total_emails(mbox_path):
         return 0
 
 def is_email_processed(session, message_id):
-    """Check if an email has already been processed."""
+    """
+    Check if an email has already been processed by looking up its Message-ID.
+    
+    Args:
+        session: SQLAlchemy session
+        message_id (str): Email's Message-ID header
+        
+    Returns:
+        bool: True if email has been processed, False otherwise
+    """
     return session.query(ProcessedEmail).filter_by(message_id=message_id).first() is not None
 
 def save_processed_email(session, message_id, is_hotel=False, error=None):
-    """Record a processed email in the database."""
+    """
+    Record a processed email in the database with its classification and any errors.
+    
+    Args:
+        session: SQLAlchemy session
+        message_id (str): Email's Message-ID header
+        is_hotel (bool): Whether email was classified as hotel-related
+        error (str, optional): Error message if processing failed
+        
+    Handles database transaction and rollback on error.
+    """
     try:
         processed = ProcessedEmail(
             message_id=message_id,
@@ -116,7 +206,25 @@ def save_processed_email(session, message_id, is_hotel=False, error=None):
         session.rollback()
 
 def save_contact(session, contact_data):
-    """Save or update contact information in the database."""
+    """
+    Save or update contact information in the database.
+    
+    Args:
+        session: SQLAlchemy session
+        contact_data (dict): Dictionary containing contact information including:
+            - Email: Contact's email address
+            - Display Name: Contact's name
+            - Hotel Name: Associated hotel (if any)
+            - Website: Hotel website
+            - Address: Physical address
+            - Coordinates: Geographical coordinates
+            - Contact: Contact information
+            - Subjects: Set of email subjects
+            - Dates: Set of communication dates
+            
+    Updates existing records by merging new information with existing data.
+    Handles database transaction and rollback on error.
+    """
     try:
         contact = session.query(Contact).filter_by(email=contact_data["Email"]).first()
         if not contact:
@@ -154,7 +262,16 @@ def save_contact(session, contact_data):
         session.rollback()
 
 def check_services():
-    """Check if required services (LM Studio) are running."""
+    """
+    Verify that required services (LM Studio) are running and accessible.
+    
+    Tests LM Studio connectivity by attempting a simple completion request.
+    Provides detailed error messages and setup instructions if services
+    are not properly configured.
+    
+    Returns:
+        bool: True if all services are running, False otherwise
+    """
     try:
         # For LM Studio, we'll just try to get a simple completion
         test_payload = {
@@ -186,8 +303,19 @@ def check_services():
 
 def query_lm_studio_batch(prompts):
     """
-    Queries LM Studio with a batch of prompts for GPU efficiency.
-    Returns a list of responses, one for each prompt.
+    Query LM Studio with multiple prompts for GPU-efficient processing.
+    
+    Args:
+        prompts (list): List of prompt strings to process
+        
+    Returns:
+        list: List of response dictionaries, one for each prompt
+        
+    Features:
+    - Batches prompts for optimal GPU utilization
+    - Configurable batch size and GPU memory allocation
+    - Handles timeouts and connection errors
+    - Returns None for failed prompts while continuing with others
     """
     if not prompts:
         return []
@@ -232,8 +360,17 @@ def query_lm_studio_batch(prompts):
 
 def query_lm_studio(prompt):
     """
-    Single prompt version of LM Studio query.
-    Uses the batch version internally for consistency.
+    Query LM Studio with a single prompt.
+    
+    Args:
+        prompt (str): The prompt to send to LM Studio
+        
+    Returns:
+        dict: Response from LM Studio, or None if query fails
+        
+    This is a convenience wrapper around query_lm_studio_batch for
+    single prompt scenarios. Uses the same batched infrastructure
+    for consistency.
     """
     results = query_lm_studio_batch([prompt])
     return results[0] if results else None
@@ -241,10 +378,19 @@ def query_lm_studio(prompt):
 
 def classify_email(subject, body):
     """
-    Uses LM Studio to determine if the email is related to hotels, lodges, 
-    or camps (potential TipJAR customers by Shukran).
-
-    Returns "Hotel" if the email is related; otherwise, returns "Other".
+    Classify an email as hotel-related or not using LM Studio.
+    
+    Args:
+        subject (str): Email subject line
+        body (str): Email body text
+        
+    Returns:
+        str: "Hotel" if email is related to hotels/lodges/camps, "Other" otherwise
+        
+    Uses a carefully crafted prompt to instruct the LM Studio model to analyze
+    the email content and determine if it's related to hospitality businesses.
+    Handles JSON parsing of the model's response and provides a default
+    classification of "Other" if analysis fails.
     """
     prompt_text = (
         "<s>[INST]Analyze this email and determine if it's related to hotels, lodges, or camps.\n\n"
@@ -272,8 +418,18 @@ def classify_email(subject, body):
 
 def extract_hotel_name(subject, body):
     """
-    Uses LM Studio to extract the name of the hotel, lodge, or camp mentioned in the email.
-    Returns the extracted name or an empty string if none is found.
+    Extract hotel names from email content using LM Studio.
+    
+    Args:
+        subject (str): Email subject line
+        body (str): Email body text
+        
+    Returns:
+        str: Extracted hotel name, or empty string if none found
+        
+    Uses natural language processing to identify and extract hotel, lodge,
+    or camp names from the email content. Handles various formats and
+    contexts in which hotel names might appear.
     """
     prompt_text = (
         "<s>[INST]Extract the name of any hotel, lodge, or camp mentioned in this email.\n\n"
@@ -301,9 +457,21 @@ def extract_hotel_name(subject, body):
 
 def get_hotel_details_from_google(hotel_name):
     """
-    Uses the Google Places API to search for hotel details using the hotel name
-    appended with 'Nairobi Kenya'. Returns a dictionary with keys:
-    'Hotel Name', 'Website', 'Address', 'Coordinates', and 'Contact'.
+    Fetch detailed hotel information from Google Places API.
+    
+    Args:
+        hotel_name (str): Name of the hotel to look up
+        
+    Returns:
+        dict: Hotel details including:
+            - Hotel Name: Official name from Google
+            - Website: Hotel's website
+            - Address: Formatted address
+            - Coordinates: Latitude/longitude
+            - Contact: Phone number
+            
+    Appends 'Nairobi Kenya' to search query for better localization.
+    Returns empty values if API call fails or no results found.
     """
     query = f"{hotel_name} Nairobi Kenya"
     url = "https://maps.googleapis.com/maps/api/place/findplacefromtext/json"
@@ -337,8 +505,16 @@ def get_hotel_details_from_google(hotel_name):
 
 def extract_addresses_and_names(header_value):
     """
-    Extracts email addresses and display names from a header string.
-    Returns a list of tuples: (email, display_name) using email.utils.getaddresses.
+    Parse email headers to extract addresses and display names.
+    
+    Args:
+        header_value (str): Raw email header value (From, To, Cc, etc.)
+        
+    Returns:
+        list: List of tuples (email, display_name)
+        
+    Uses email.utils.getaddresses to properly handle various email formats
+    including quoted display names, multiple addresses, and special characters.
     """
     addresses = []
     if header_value:
@@ -350,11 +526,32 @@ def extract_addresses_and_names(header_value):
 
 
 def create_session():
-    """Create a new scoped session for thread-safe database access."""
+    """
+    Create a new thread-safe database session.
+    
+    Returns:
+        scoped_session: A new SQLAlchemy scoped session
+        
+    Uses SQLAlchemy's scoped_session to ensure thread-safety when
+    multiple parts of the application need database access.
+    """
     return scoped_session(Session)
 
 def process_emails_in_batch(emails, session):
-    """Process a batch of emails together for GPU efficiency."""
+    """
+    Process multiple emails together for GPU-efficient classification.
+    
+    Args:
+        emails (list): List of email message objects to process
+        session: SQLAlchemy session for database operations
+        
+    Features:
+    - Batches classification requests for GPU efficiency
+    - Extracts email content from both multipart and simple messages
+    - Handles errors individually per email
+    - Records processing status in database
+    - Processes hotel-related emails further for contact extraction
+    """
     if not emails:
         return
         
@@ -416,7 +613,23 @@ def process_emails_in_batch(emails, session):
             save_processed_email(session, message.get("Message-ID", ""), is_hotel=False, error=error_msg)
 
 def process_hotel_email(message, session):
-    """Process an email that has been classified as hotel-related."""
+    """
+    Extract and store information from a hotel-related email.
+    
+    Args:
+        message: Email message object
+        session: SQLAlchemy session
+        
+    Returns:
+        dict: Dictionary of extracted contact information
+        
+    Processing steps:
+    1. Extract all email addresses and names from headers
+    2. Remove duplicate contacts
+    3. Extract hotel name using LM Studio
+    4. Fetch hotel details from Google Places API
+    5. Save contact information to database
+    """
     contacts = {}
     subject = message.get("subject", "")
     date = message.get("date", "")
@@ -472,9 +685,21 @@ def process_hotel_email(message, session):
 
 def process_mbox(mbox_path, session):
     """
-    Processes the MBOX file and extracts data from emails that are classified as
-    hospitality-related (i.e. hotels, lodges, or camps). Uses batched processing
-    for better GPU utilization.
+    Process an MBOX file to extract hotel-related information.
+    
+    Args:
+        mbox_path (str): Path to the MBOX file
+        session: SQLAlchemy session
+        
+    Returns:
+        dict: Dictionary of processed contacts
+        
+    Features:
+    - Counts total emails for progress tracking
+    - Uses tqdm for progress display
+    - Skips previously processed emails
+    - Processes emails in batches for GPU efficiency
+    - Handles errors gracefully and continues processing
     """
     contacts = {}
     total_emails = get_total_emails(mbox_path)
@@ -516,10 +741,25 @@ def process_mbox(mbox_path, session):
 
 def write_csv(session, output_file, append=False):
     """
-    Writes the aggregated contact and hotel data to a CSV file.
-    The CSV contains the following columns:
-    Email, Display Name, Hotel Name, Website, Address, Coordinates, Contact, Subjects, Dates.
-    Sets (for subjects and dates) are converted into semicolon-separated strings.
+    Export contact and hotel data to CSV format.
+    
+    Args:
+        session: SQLAlchemy session
+        output_file (str): Path to output CSV file
+        append (bool): Whether to append to existing file
+        
+    CSV Structure:
+    - Email: Contact's email address
+    - Display Name: Contact's name
+    - Hotel Name: Associated hotel
+    - Website: Hotel website
+    - Address: Physical address
+    - Coordinates: Geographical coordinates
+    - Contact: Contact information
+    - Subjects: Semicolon-separated list of email subjects
+    - Dates: Semicolon-separated list of communication dates
+    
+    Handles JSON decoding of stored sets and proper UTF-8 encoding.
     """
     mode = "a" if append else "w"  # Append or write mode
     logging.info(f"Writing results to CSV: {output_file}")
@@ -551,7 +791,25 @@ def write_csv(session, output_file, append=False):
 
 
 def process_mbox_in_chunks(mbox_path, output_csv):
-    """Process mbox file in chunks, writing results as we go."""
+    """
+    Process large MBOX files in memory-efficient chunks.
+    
+    Args:
+        mbox_path (str): Path to the MBOX file
+        output_csv (str): Path for the output CSV file
+        
+    Features:
+    - Splits large files into manageable chunks
+    - Processes each chunk independently
+    - Maintains progress across chunks
+    - Appends results to CSV incrementally
+    - Cleans up temporary chunk files
+    - Provides progress updates
+    
+    This is the main processing function that handles large MBOX files
+    by breaking them into smaller pieces that can be processed without
+    consuming too much memory.
+    """
     try:
         chunk_size = CHUNK_SIZE_MB * 1024 * 1024  # Convert MB to bytes
         total_size = os.path.getsize(mbox_path)
@@ -622,7 +880,18 @@ def process_mbox_in_chunks(mbox_path, output_csv):
         raise
 
 def main():
-    """Main entry point for the email processor."""
+    """
+    Main entry point for the email processor application.
+    
+    Workflow:
+    1. Set up logging
+    2. Check required services (LM Studio)
+    3. Process MBOX file in chunks
+    4. Handle errors and cleanup
+    
+    The main function coordinates the overall processing flow and
+    ensures proper error handling and resource cleanup.
+    """
     logging.info("Starting email processing job")
     try:
         # Check if required services are running
