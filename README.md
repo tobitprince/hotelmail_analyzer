@@ -1,6 +1,29 @@
-# Email Processor for Hotel-Related Communications
+# HotelMail Analyzer
 
-A Python application that processes MBOX email files to identify and extract information about hotel-related communications. This tool is specifically designed to analyze email content, identify hotel-related conversations, and compile contact information for potential TipJAR customers.
+## About
+
+HotelMail Analyzer is an intelligent email processing system designed to streamline the identification and extraction of hospitality-related communications. Born from the need to efficiently process large email datasets and identify potential TipJAR customers in the hospitality sector, this tool combines the power of AI (using LM Studio with Mistral-7B) with robust data processing capabilities.
+
+### Why HotelMail Analyzer?
+
+- **Time-Saving**: Automatically processes thousands of emails to identify hotel-related communications
+- **Intelligent Analysis**: Uses AI to understand context and extract relevant information
+- **Data Enrichment**: Enhances contact information with Google Places API integration
+- **Memory Efficient**: Handles large MBOX files through chunked processing
+- **Reliable Storage**: Maintains a SQLite database for processed data with resume capability
+- **Structured Output**: Exports findings in CSV format for easy integration with other tools
+
+### Alternative Names
+
+If you're looking to rebrand or customize this tool, here are some suggested names:
+- HospitalityMail Inspector
+- LodgeMail Processor
+- HotelComm Analyzer
+- AccomMail Scanner
+- StayMail Processor
+- HotelLeads Extractor
+- HospitalityIntel
+- LodgingMail Finder
 
 ## Features
 
