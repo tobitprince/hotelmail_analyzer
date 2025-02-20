@@ -1,1 +1,7 @@
 .env
+/__pycache__
+/.pytest_cache
+/.vscode
+/virtual
+all_emails_from_mathenge_shukran.mbox.chunk2
+tipjar_customers.csv
