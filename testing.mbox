@@ -1,0 +1,104 @@
+From MAILER-DAEMON Mon Feb 17 10:00:00 2025
+Return-Path: <bouncing-email@example.com>
+Delivered-To: user@example.com
+Received: by mail.example.com with LMTP id ABC1234 for <user@example.com>; Mon, 17 Feb 2025 10:00:00 +0000
+Date: Mon, 17 Feb 2025 10:00:00 +0300
+From: "The Sarova Stanley" <reservations@sarovastanley.com>
+To: user@example.com
+Subject: Booking Confirmation - Sarova Stanley, Nairobi
+Message-ID: <b271e528-68da-42ba-88b7-6d87214a1412@example.com>
+
+Dear User,
+
+Thank you for your reservation at The Sarova Stanley in Nairobi. We confirm your booking from March 10th to March 15th. We look forward to welcoming you to experience our luxurious accommodations and exceptional service.
+
+Best regards,
+The Sarova Stanley Team
+www.sarovahotels.com
+
+From MAILER-DAEMON Mon Feb 17 10:05:00 2025
+Return-Path: <bouncing-email@example.com>
+Delivered-To: user@example.com
+Received: by mail.example.com with LMTP id DEF5678 for <user@example.com>; Mon, 17 Feb 2025 10:05:00 +0000
+Date: Mon, 17 Feb 2025 10:05:00 +0300
+From: "Kenya Airways" <info@kenya-airways.com>
+To: user@example.com
+Subject: Your Flight Itinerary
+Message-ID: <01d1540f-ad47-4723-b70b-670857f88d9a@example.com>
+
+Dear User,
+
+Attached is your flight itinerary for your upcoming trip.
+
+Sincerely,
+Kenya Airways
+
+From MAILER-DAEMON Mon Feb 17 10:10:00 2025
+Return-Path: <bouncing-email@example.com>
+Delivered-To: user@example.com
+Received: by mail.example.com with LMTP id GHI9012 for <user@example.com>; Mon, 17 Feb 2025 10:10:00 +0000
+Date: Mon, 17 Feb 2025 10:10:00 +0300
+From: "Fairmont The Norfolk" <reservations@fairmont.com>
+To: user@example.com
+Subject: Special Offer at Fairmont The Norfolk, Nairobi
+Message-ID: <cdc36398-d8e2-49d4-b075-c8242feb9b2f@example.com>
+
+Hi User,
+
+Enjoy a luxurious stay at the iconic Fairmont The Norfolk in Nairobi. Book now and receive a complimentary upgrade!
+
+Sincerely,
+The Fairmont The Norfolk Team
+www.fairmont.com/norfolk-hotel-nairobi/
+
+From MAILER-DAEMON Mon Feb 17 10:15:00 2025
+Return-Path: <bouncing-email@example.com>
+Delivered-To: user@example.com
+Received: by mail.example.com with LMTP id JKL3456 for <user@example.com>; Mon, 17 Feb 2025 10:15:00 +0000
+Date: Mon, 17 Feb 2025 10:15:00 +0300
+From: "Safaricom" <noreply@safaricom.co.ke>
+To: user@example.com
+Subject: Your Safaricom Bill
+Message-ID: <a31e9bd4-31b1-4a5f-9c42-95876db9ae18@example.com>
+
+Dear User,
+
+Please find your latest Safaricom bill attached.
+
+Sincerely,
+Safaricom
+
+From MAILER-DAEMON Mon Feb 17 10:20:00 2025
+Return-Path: <bouncing-email@example.com>
+Delivered-To: user@example.com
+Received: by mail.example.com with LMTP id MNO7890 for <user@example.com>; Mon, 17 Feb 2025 10:20:00 +0000
+Date: Mon, 17 Feb 2025 10:20:00 +0300
+From: "Mara Serena Safari Lodge" <info@serenahotels.com>
+To: user@example.com
+Subject: Experience the Masai Mara at Mara Serena Safari Lodge
+Message-ID: <1c7972d0-396a-4c94-9e50-71d5d862f82f@example.com>
+
+Hi User,
+
+Discover the wonders of the Masai Mara with a stay at Mara Serena Safari Lodge. Book your safari adventure today!
+
+Best,
+The Serena Hotels Team
+www.serenahotels.com/mara
+
+From MAILER-DAEMON Mon Feb 17 10:25:00 2025
+Return-Path: <bouncing-email@example.com>
+Delivered-To: user@example.com
+Received: by mail.example.com with LMTP id PQR1234 for <user@example.com>; Mon, 17 Feb 2025 10:25:00 +0000
+Date: Mon, 17 Feb 2025 10:25:00 +0300
+From: "Jumia Kenya" <noreply@jumia.co.ke>
+To: user@example.com
+Subject: Great Deals on Jumia!
+Message-ID: <94dc967a-25ac-4ef4-ab83-b222a59d3727@example.com>
+
+Dear User,
+
+Check out the latest deals and offers on Jumia Kenya!
+
+Thanks,
+Jumia Kenya

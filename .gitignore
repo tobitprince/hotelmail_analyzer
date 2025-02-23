@@ -1,1 +1,14 @@
 .env
+/__pycache__
+/.pytest_cache
+/.vscode
+/virtual
+all_emails_from_mathenge_shukran.mbox.chunk2
+tipjar_customers.csv
+email_processor.log
+tipjar_customers1.csv
+email_processing.db
+
+
+gemini_tipjar_customers.csv
+gemini_email_processing.db
