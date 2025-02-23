@@ -1,18 +1,32 @@
 from dataclasses import dataclass
-from decouple import config
+from dotenv import load_dotenv, find_dotenv
+import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class AppConfig:
-    CHUNK_SIZE_MB: int = 100
-    BATCH_SIZE: int = 1
-    GPU_MEMORY: int = 4096
-    MBOX_FILE: str = config("MBOX_FILE", default="path/to/your_downloaded_file.mbox")
-    OUTPUT_CSV: str = config("OUTPUT_CSV", default="tipjar_customers.csv")
-    GOOGLE_PLACES_API_KEY: str = config("GOOGLE_PLACES_API_KEY")
-    LM_STUDIO_API_URL: str = config("LM_STUDIO_API_URL", default="http://127.0.0.1:1234/v1/completions")
-    LM_STUDIO_MODEL: str = config("LM_STUDIO_MODEL", default="mistral-7b-instruct-v0.2")
-    LM_STUDIO_TIMEOUT: int = config("LM_STUDIO_TIMEOUT", cast=int, default=30)
-    HUGGINGFACE_API_TOKEN: str = config("HUGGINGFACE_API_TOKEN")
-    HUGGINGFACE_MODEL: str = config("HUGGINGFACE_MODEL", default="gpt2")
-    OPENROUTER_API_KEY: str = config("OPENROUTER_API_KEY")
-    GEMINI_API_KEY: str = config("GEMINI_API_KEY")
+    def __init__(self):
+        # Force load from .env file
+        dotenv_path = find_dotenv()
+        load_dotenv(dotenv_path, override=True)
+        
+        # Load configuration values
+        self.GOOGLE_PLACES_API_KEY: str = os.getenv("GOOGLE_PLACES_API_KEY")
+        self.MBOX_FILE: str = os.getenv("MBOX_FILE", "path/to/your_downloaded_file.mbox")
+        self.OUTPUT_CSV: str = os.getenv("OUTPUT_CSV", "tipjar_customers.csv")
+        self.CHUNK_SIZE_MB: int = 100
+        self.BATCH_SIZE: int = 1
+        self.GPU_MEMORY: int = 4096
+        self.LM_STUDIO_API_URL: str = os.getenv("LM_STUDIO_API_URL", "http://127.0.0.1:1234/v1/completions")
+        self.LM_STUDIO_MODEL: str = os.getenv("LM_STUDIO_MODEL", "mistral-7b-instruct-v0.2")
+        self.LM_STUDIO_TIMEOUT: int = int(os.getenv("LM_STUDIO_TIMEOUT", "30"))
+        self.HUGGINGFACE_API_TOKEN: str = os.getenv("HUGGINGFACE_API_TOKEN")
+        self.HUGGINGFACE_MODEL: str = os.getenv("HUGGINGFACE_MODEL", "gpt2")
+        self.OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY")
+        self.GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY")
+        
+        # Log critical configuration values
+        if not self.GOOGLE_PLACES_API_KEY:
+            logger.warning("GOOGLE_PLACES_API_KEY not found in configuration")
