@@ -18,7 +18,7 @@ headers = {
 def get_response(user_input):
     # Payload with system prompt
     payload = {
-        "model": "cognitivecomputations/dolphin3.0-r1-mistral-24b:free",
+        "model": "google/gemini-2.0-pro-exp-02-05:free",
         "messages": [
             {"role": "system", "content": "You are a helpful assistant. Always respond clearly and concisely."},
             {"role": "user", "content": user_input}
