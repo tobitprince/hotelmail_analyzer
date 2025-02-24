@@ -1,14 +1,23 @@
 """
 Email Processor for Hotel-Related Communications using Hugging Face API
 
-This script processes MBOX email files to identify hotel-related emails and extract hotel names
-using the Hugging Face Inference API (Mistral-7B model). It also fetches hotel details from the
-Google Places API, stores results in a SQLite database, and exports them to a CSV file.
+This module processes MBOX email files to identify and extract information about hotel-related
+communications. It uses the Hugging Face API with the Mistral-7B model for email classification
+and hotel name extraction, and the Google Places API for fetching additional hotel details.
+
+Key Features:
+- Processes large MBOX files in manageable chunks
+- Uses AI for intelligent email classification
+- Extracts hotel names and contact information
+- Integrates with Google Places API
+- Maintains a SQLite database
+- Exports results to CSV
+- Supports batch processing for efficiency
 
 Dependencies:
-- requests, sqlalchemy, python-decouple, tqdm
 - Hugging Face API token
 - Google Places API key
+- Python packages: sqlalchemy, requests, python-decouple, tqdm, etc.
 
 Environment Variables:
 - MBOX_FILE: Path to the MBOX file
@@ -25,14 +34,20 @@ import json
 import requests
 import logging
 from datetime import datetime
-from email.parser import BytesParser
 from email import policy
+import time
+import tempfile
+from email.parser import BytesParser
+from email.utils import getaddresses
 from decouple import config
 from tqdm import tqdm
 from sqlalchemy import create_engine, Column, String, Integer, DateTime, Text, Boolean
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.exc import SQLAlchemyError
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from sqlalchemy.pool import QueuePool
+from contextlib import contextmanager
+
 from config import AppConfig
 from log_config import setup_logging
 
@@ -40,18 +55,34 @@ from log_config import setup_logging
 logger = setup_logging()
 config = AppConfig()
 
-
-# Hugging Face API setup
 HUGGINGFACE_API_URL = config.HUGGINGFACE_API_URL
-HEADERS = {"Authorization": f"Bearer {config.HUGGINGFACE_API_TOKEN}", "Content-Type": "application/json"}
-
-if not config.HUGGINGFACE_API_TOKEN:
-    raise ValueError("HUGGINGFACE_API_TOKEN is missing from environment variables")
+HUGGINGFACE_API_TOKEN = config.HUGGINGFACE_API_TOKEN
+HEADERS = {
+    "Authorization": f"Bearer {HUGGINGFACE_API_TOKEN}",
+    "Content-Type": "application/json"
+}
 
 # Database setup
 Base = declarative_base()
-engine = create_engine('sqlite:///huggingface_email_processing.db')
+engine = create_engine('sqlite:///huggingface_email_processing.db',
+                      poolclass=QueuePool,
+                      pool_size=5,
+                      max_overflow=10,
+                      pool_timeout=30)
 Session = sessionmaker(bind=engine)
+
+@contextmanager
+def get_db_session():
+    """Context manager for database sessions."""
+    session = Session()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 class ProcessedEmail(Base):
     __tablename__ = 'processed_emails'
@@ -71,168 +102,542 @@ class Contact(Base):
     address = Column(String)
     coordinates = Column(String)
     contact = Column(String)
-    subjects = Column(Text)  # JSON array
-    dates = Column(Text)     # JSON array
+    subjects = Column(Text)  # Stored as JSON array
+    dates = Column(Text)     # Stored as JSON array
 
 Base.metadata.create_all(engine)
 
 ### Utility Functions
 
-def test_huggingface_connection():
-    """Test connection to Hugging Face API"""
+def get_total_emails(mbox_path):
+    """Count total emails in the MBOX file."""
     try:
-        response = requests.post(
-            HUGGINGFACE_API_URL,
-            headers=HEADERS,
-            json={"inputs": "test"},
-            timeout=10
-        )
-        response.raise_for_status()
-        logger.info(f"✓ Hugging Face API is running: Status {response.status_code}")
-        print(f"API Connection Successful: Status {response.status_code}")
-        return True
-    except requests.exceptions.RequestException as e:
-        logger.error(f"× Hugging Face API connection error: {str(e)}")
-        print(f"API Connection Failed: {str(e)}")
+        if not os.path.exists(mbox_path):
+            print(f"Error: Mbox file not found at {mbox_path}")
+            return 0
+        file_size = os.path.getsize(mbox_path)
+        if file_size == 0:
+            print("Error: Mbox file is empty")
+            return 0
+        print(f"Loading mbox file ({file_size/1024/1024:.2f} MB)...")
+        count = 0
+        mbox = mailbox.mbox(mbox_path)
+        print("Counting messages...")
+        for _ in mbox:
+            count += 1
+            if count % 100 == 0:
+                print(f"Counted {count} messages...")
+        mbox.close()
+        print(f"Found {count} total messages")
+        return count
+    except Exception as e:
+        print(f"Error counting emails: {str(e)}")
+        return 0
+
+def is_email_processed(session, message_id):
+    """Check if an email has already been processed."""
+    if not message_id:
+        return False
+    message_id = message_id.strip()
+    try:
+        return session.query(ProcessedEmail).filter(ProcessedEmail.message_id == message_id).first() is not None
+    except SQLAlchemyError as e:
+        logger.error(f"Database error checking if email is processed: {e}")
         return False
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+def save_processed_email(session, message_id, is_hotel=False, error=None):
+    """Save processed email details to the database."""
+    try:
+        existing = session.query(ProcessedEmail).filter(ProcessedEmail.message_id == message_id.strip()).first()
+        if existing:
+            existing.date_processed = datetime.now()
+            existing.is_hotel_related = is_hotel
+            existing.error = error
+        else:
+            new_email = ProcessedEmail(
+                message_id=message_id.strip(),
+                date_processed=datetime.now(),
+                is_hotel_related=is_hotel,
+                error=error
+            )
+            session.add(new_email)
+        session.commit()
+    except SQLAlchemyError as e:
+        logger.error(f"Database error saving processed email: {e}")
+        session.rollback()
+
+def save_contact(session, contact_data):
+    """Save or update contact information in the database."""
+    try:
+        email = contact_data.get("Email", "").lower().strip()
+        if not email:
+            logger.error("Attempted to save contact without email address")
+            return None
+
+        display_name = contact_data.get("Display Name", "").strip()
+        if not display_name:
+            display_name = email.split('@')[0].replace('.', ' ').title()
+
+        subjects = list(contact_data.get("Subjects", set()))
+        dates = list(contact_data.get("Dates", set()))
+
+        contact = session.query(Contact).filter_by(email=email).first()
+        if not contact:
+            contact = Contact(
+                email=email,
+                display_name=display_name,
+                hotel_name=contact_data.get("Hotel Name", ""),
+                website=contact_data.get("Website", ""),
+                address=contact_data.get("Address", ""),
+                coordinates=contact_data.get("Coordinates", ""),
+                contact=contact_data.get("Contact", ""),
+                subjects=json.dumps(subjects),
+                dates=json.dumps(dates)
+            )
+            session.add(contact)
+        else:
+            if contact_data.get("Hotel Name"):
+                contact.hotel_name = contact_data["Hotel Name"]
+                contact.website = contact_data.get("Website") or contact.website
+                contact.address = contact_data.get("Address") or contact.address
+                contact.coordinates = contact_data.get("Coordinates") or contact.coordinates
+                contact.contact = contact_data.get("Contact") or contact.contact
+
+            existing_subjects = set(json.loads(contact.subjects)) if contact.subjects else set()
+            existing_dates = set(json.loads(contact.dates)) if contact.dates else set()
+            contact.subjects = json.dumps(list(existing_subjects | set(subjects)))
+            contact.dates = json.dumps(list(existing_dates | set(dates)))
+
+        session.commit()
+        logger.info(f"Successfully saved/updated contact: {email}")
+        return contact
+    except Exception as e:
+        logger.error(f"Error saving contact: {e}")
+        session.rollback()
+        return None
+
+### Hugging Face API Functions
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=4, max=20),
+    retry=retry_if_exception_type(requests.exceptions.RequestException)
+)
 def query_huggingface(prompt):
-    """Query Hugging Face API with a prompt"""
-    payload = {
-        "inputs": prompt,
-        "parameters": {"max_new_tokens": 100, "temperature": 0.7}
-    }
-    response = requests.post(HUGGINGFACE_API_URL, headers=HEADERS, json=payload, timeout=10)
-    response.raise_for_status()
-    result = response.json()
-    return result[0].get("generated_text", "").strip()
+    """Query Hugging Face API with a single prompt."""
+    try:
+        payload = {
+            "inputs": prompt,
+            "parameters": {
+                "max_new_tokens": 300,  # Limit response length
+                "temperature": 0.5,     # Control randomness
+                "top_p": 0.95           # Nucleus sampling
+            }
+        }
+        response = requests.post(HUGGINGFACE_API_URL, headers=HEADERS, json=payload, timeout=10)
+        response.raise_for_status()
+        result = response.json()
+        generated_text = result[0].get("generated_text", "").strip()
+        return generated_text
+    except Exception as e:
+        logger.error(f"Error querying Hugging Face: {e}")
+        raise
+
+def query_huggingface_batch(prompts):
+    """Process a batch of prompts individually with Hugging Face."""
+    responses = []
+    for prompt in prompts:
+        try:
+            response = query_huggingface(prompt)
+            responses.append({"generated_text": response})
+        except Exception:
+            responses.append(None)
+    return responses
 
 def classify_email(subject, body):
-    """Classify an email as hotel-related using Hugging Face"""
+    """Classify an email as hotel-related or not using Hugging Face."""
+    logger.info(f"Entering classify_email with subject: '{subject}'")
     prompt = (
-        "Classify this email as 'Hotel' if it involves hotel bookings, confirmations, offers, or stays; "
-        "otherwise 'Other'. Return ONLY a JSON object like {\"classification\": \"Hotel\"}. "
-        f"Subject: {subject}\nBody: {body}"
+        "You are an expert assistant tasked with classifying this email as 'Hotel' if it involves hotel bookings, confirmations, offers, or stays at hotels, lodges, or camps; otherwise 'Other'. "
+        "Return ONLY a JSON object with a single key 'classification' and its value as 'Hotel' or 'Other'. Do not include any extra text, explanations, or the prompt in your response—just the JSON object.\n\n"
+        "Examples:\n"
+        "- Subject: 'Booking Confirmation - Sarova Stanley', Body: 'Your room is confirmed...' → {\"classification\": \"Hotel\"}\n"
+        "- Subject: 'Your Flight Itinerary', Body: 'Attached is your flight...' → {\"classification\": \"Other\"}\n"
+        "- Subject: 'Special Offer at Fairmont The Norfolk', Body: 'Enjoy a luxurious stay...' → {\"classification\": \"Hotel\"}\n\n"
+        f"Subject: {subject}\n"
+        f"Body: {body}"
     )
     try:
-        result = query_huggingface(prompt)
-        cleaned_result = re.sub(r'```json\s*|\s*```', '', result).strip()
-        output = json.loads(cleaned_result)
-        return output.get("classification", "Other")
+        result = query_huggingface_batch([prompt])
+        if result and result[0]:
+            generated_text = result[0].get("generated_text", "").strip()
+            logger.info(f"Hugging Face raw response for subject '{subject}': '{generated_text}'")
+            # Extract the last JSON object in the response
+            json_matches = re.findall(r'\{[^\{\}]*\}', generated_text)
+            json_text = json_matches[-1] if json_matches else generated_text
+            logger.info(f"Extracted JSON for subject '{subject}': '{json_text}'")
+            if not json_text:
+                logger.warning(f"Empty response from Hugging Face for subject '{subject}'")
+                return "Other"
+            try:
+                output = json.loads(json_text)
+                classification = output.get("classification", "Other").strip()
+                logger.info(f"Parsed classification for subject '{subject}': '{classification}'")
+                return classification
+            except json.JSONDecodeError:
+                logger.warning(f"Invalid JSON from Hugging Face for subject '{subject}': '{json_text}'")
+                return "Other"
+        else:
+            logger.warning(f"No valid response from Hugging Face for subject '{subject}'")
+            return "Other"
     except Exception as e:
-        logger.error(f"Error classifying email: {e}")
+        logger.error(f"Error classifying email with Hugging Face for subject '{subject}': {e}")
         return "Other"
 
 def extract_hotel_name(subject, body):
-    """Extract hotel name from email using Hugging Face"""
+    """Extract hotel names from email content using Hugging Face."""
     prompt = (
-        "Extract the hotel name from this email. Return ONLY a JSON object like {\"hotel_name\": \"Sarova Stanley\"} or {\"hotel_name\": \"\"}. "
-        f"Subject: {subject}\nBody: {body}"
+        "You are an expert assistant tasked with extracting the name of any hotel, lodge, or camp mentioned in this email. "
+        "Return ONLY a JSON object with a single key 'hotel_name' and its value as the extracted name or an empty string if none is found. Do not include any extra text, explanations, or the prompt in your response—just the JSON object.\n\n"
+        "Examples:\n"
+        "- Subject: 'Booking Confirmation - Sarova Stanley', Body: 'Your room at Sarova Stanley...' → {\"hotel_name\": \"Sarova Stanley\"}\n"
+        "- Subject: 'Your Flight Itinerary', Body: 'No hotel mentioned...' → {\"hotel_name\": \"\"}\n"
+        "- Subject: 'Stay at Mara Serena', Body: 'Enjoy Mara Serena Safari Lodge...' → {\"hotel_name\": \"Mara Serena Safari Lodge\"}\n\n"
+        f"Subject: {subject}\n"
+        f"Body: {body}"
     )
     try:
-        result = query_huggingface(prompt)
-        cleaned_result = re.sub(r'```json\s*|\s*```', '', result).strip()
-        output = json.loads(cleaned_result)
-        return output.get("hotel_name", "")
+        result = query_huggingface_batch([prompt])
+        if result and result[0]:
+            generated_text = result[0].get("generated_text", "").strip()
+            logger.info(f"Hugging Face raw response for hotel name extraction, subject '{subject}': '{generated_text}'")
+            # Extract the last JSON object in the response
+            json_matches = re.findall(r'\{[^\{\}]*\}', generated_text)
+            json_text = json_matches[-1] if json_matches else generated_text
+            logger.info(f"Extracted JSON for hotel name extraction, subject '{subject}': '{json_text}'")
+            if not json_text:
+                logger.warning(f"Empty response from Hugging Face for hotel name extraction, subject '{subject}'")
+                return ""
+            try:
+                output = json.loads(json_text)
+                hotel_name = output.get("hotel_name", "").strip()
+                logger.info(f"Extracted hotel name for subject '{subject}': '{hotel_name}'")
+                return hotel_name
+            except json.JSONDecodeError:
+                logger.warning(f"Invalid JSON from Hugging Face for subject '{subject}': '{json_text}'")
+                return ""
+        else:
+            logger.warning(f"No valid response from Hugging Face for subject '{subject}'")
+            return ""
     except Exception as e:
-        logger.error(f"Error extracting hotel name: {e}")
+        logger.error(f"Error extracting hotel name with Hugging Face for subject '{subject}': {e}")
         return ""
 
+### Google Places API Function (Unchanged)
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def get_hotel_details_from_google(hotel_name):
-    """Fetch hotel details from Google Places API"""
-    if not hotel_name or not config.GOOGLE_PLACES_API_KEY:
+    if not hotel_name:
+        logger.warning("Empty hotel name provided")
         return {}
-    url = "https://maps.googleapis.com/maps/api/place/textsearch/json"
-    params = {"query": f"{hotel_name} hotel", "key": config.GOOGLE_PLACES_API_KEY}
     try:
-        response = requests.get(url, params=params, timeout=10)
+        query = f"{hotel_name} hotel kenya" if "hotel" not in hotel_name.lower() else f"{hotel_name} kenya"
+        logger.debug(f"Querying Google Places API with: {query}")
+        url = "https://maps.googleapis.com/maps/api/place/textsearch/json"
+        api_key = config.GOOGLE_PLACES_API_KEY
+        logger.debug(f"Using API key: {api_key[:10]}...")
+        params = {
+            'query': query,
+            'key': api_key
+        }
+        response = requests.get(url, params=params, timeout=30)
         response.raise_for_status()
-        results = response.json().get("results", [])
-        if not results:
+        results = response.json()
+        logger.debug(f"Google Places API response: {results}")
+        if results.get('status') == 'REQUEST_DENIED':
+            logger.error(f"Google Places API request denied: {results.get('error_message')}")
             return {}
-        place = results[0]
+        if results.get('status') != 'OK' or not results.get('results'):
+            logger.warning(f"No results found for hotel: {hotel_name}")
+            return {}
+        place = results['results'][0]
+        if 'place_id' not in place:
+            return {
+                "Hotel Name": place.get('name', hotel_name),
+                "Website": "",
+                "Address": place.get('formatted_address', ''),
+                "Coordinates": f"{place['geometry']['location']['lat']},{place['geometry']['location']['lng']}",
+                "Contact": ""
+            }
+        place_id = place['place_id']
+        details_url = "https://maps.googleapis.com/maps/api/place/details/json"
+        details_params = {
+            'place_id': place_id,
+            'fields': 'name,website,formatted_address,geometry,formatted_phone_number',
+            'key': api_key
+        }
+        details_response = requests.get(details_url, params=details_params, timeout=30)
+        details_response.raise_for_status()
+        details = details_response.json()['result']
+        logger.debug(f"Place details: {details}")
         return {
-            "Hotel Name": place.get("name", hotel_name),
-            "Address": place.get("formatted_address", ""),
-            "Coordinates": f"{place['geometry']['location']['lat']},{place['geometry']['location']['lng']}"
+            "Hotel Name": details.get('name', hotel_name),
+            "Website": details.get('website', ''),
+            "Address": details.get('formatted_address', ''),
+            "Coordinates": f"{details['geometry']['location']['lat']},{details['geometry']['location']['lng']}",
+            "Contact": details.get('formatted_phone_number', '')
         }
     except Exception as e:
-        logger.error(f"Error fetching Google Places data: {e}")
+        logger.error(f"Error fetching hotel details: {e}")
+        return {"Hotel Name": hotel_name, "Website": "", "Address": "", "Coordinates": "", "Contact": ""}
+
+### Email Processing Functions
+
+def extract_addresses_and_names(header_value):
+    addresses = []
+    if header_value:
+        parsed = getaddresses([header_value])
+        for name, email in parsed:
+            if email:
+                addresses.append((email, name.strip()))
+    return addresses
+
+def process_emails_in_batch(emails):
+    if not emails:
+        return
+
+    with Session() as session:
+        for message in emails:
+            try:
+                subject = message.get("subject", "")
+                body = ""
+                if message.is_multipart():
+                    for part in message.walk():
+                        if part.get_content_type() == "text/plain":
+                            try:
+                                body = part.get_content()
+                                break
+                            except UnicodeDecodeError:
+                                continue
+                else:
+                    try:
+                        body = message.get_content()
+                    except UnicodeDecodeError:
+                        pass
+
+                classification = classify_email(subject, body)
+                logger.info(f"Classified email - Subject: '{subject}', Classification: '{classification}'")
+
+                is_hotel = classification.lower() == "hotel"
+                if is_hotel:
+                    process_hotel_email(message)
+
+                msg_id = message.get("Message-ID", "")
+                save_processed_email(
+                    session,
+                    msg_id,
+                    is_hotel=is_hotel
+                )
+            except Exception as e:
+                msg_id = message.get("Message-ID", "")
+                error_msg = f"Error processing email: {str(e)}"
+                logger.error(error_msg)
+                save_processed_email(
+                    session,
+                    msg_id,
+                    is_hotel=False,
+                    error=error_msg
+                )
+
+def process_hotel_email(message):
+    try:
+        contacts = {}
+        subject = message.get("subject", "").strip()
+        date = message.get("date", "").strip()
+
+        content = ""
+        if message.is_multipart():
+            for part in message.walk():
+                if part.get_content_type() == "text/plain":
+                    content = part.get_payload(decode=True).decode('utf-8', errors='ignore')
+                    break
+        else:
+            content = message.get_payload(decode=True).decode('utf-8', errors='ignore')
+
+        extracted_name = extract_hotel_name(subject, content)
+        logger.info(f"Processing email with subject '{subject}', extracted hotel name: '{extracted_name}'")
+
+        hotel_details = {}
+        if extracted_name:
+            hotel_details = get_hotel_details_from_google(extracted_name)
+            logger.debug(f"Retrieved hotel details: {hotel_details}")
+
+        with get_db_session() as session:
+            for header in ["From", "To", "Cc", "Bcc"]:
+                addresses = message.get(header, "")
+                if addresses:
+                    for display_name, email in extract_addresses_and_names(addresses):
+                        if not email:
+                            continue
+
+                        contact_data = {
+                            "Email": email.lower(),
+                            "Display Name": display_name,
+                            "Hotel Name": extracted_name,
+                            "Website": hotel_details.get("Website", ""),
+                            "Address": hotel_details.get("Address", ""),
+                            "Coordinates": hotel_details.get("Coordinates", ""),
+                            "Contact": hotel_details.get("Contact", ""),
+                            "Subjects": {subject} if subject else set(),
+                            "Dates": {date} if date else set()
+                        }
+
+                        saved_contact = save_contact(session, contact_data)
+                        if saved_contact:
+                            contacts[email] = contact_data
+
+        logger.info(f"Processed hotel email with {len(contacts)} contacts")
+        return contacts
+    except Exception as e:
+        logger.error(f"Error in process_hotel_email: {e}")
         return {}
 
-def process_email(message):
-    """Process a single email"""
-    with Session() as session:
-        message_id = message.get("Message-ID", "")
-        if not message_id or session.query(ProcessedEmail).filter_by(message_id=message_id).first():
+def process_mbox(mbox_path):
+    contacts = {}
+    total_emails = get_total_emails(mbox_path)
+    mbox = mailbox.mbox(mbox_path, factory=lambda f: BytesParser(policy=policy.default).parse(f))
+    logger.info(f"Starting to process {total_emails} emails")
+    current_batch = []
+    with tqdm(total=total_emails, desc="Processing emails") as pbar:
+        try:
+            with Session() as session:
+                for message in mbox:
+                    message_id = message.get("Message-ID", "")
+                    if not message_id:
+                        logger.warning("Email without Message-ID encountered")
+                        pbar.update(1)
+                        continue
+                    current_batch.append(message)
+                    if len(current_batch) >= config.BATCH_SIZE:
+                        process_emails_in_batch(current_batch)
+                        pbar.update(len(current_batch))
+                        current_batch = []
+                if current_batch:
+                    process_emails_in_batch(current_batch)
+                    pbar.update(len(current_batch))
+        except Exception as e:
+            logger.error(f"Error processing mbox: {e}")
+            raise
+        finally:
+            mbox.close()
+    return contacts
+
+def write_csv(session, output_file, append=False):
+    try:
+        contacts = session.query(Contact).all()
+        if not contacts:
+            logger.warning("No contacts to write to CSV")
             return
 
-        subject = message.get("subject", "")
-        body = message.get_payload(decode=True).decode("utf-8", errors="ignore") if message.get_payload() else ""
-        
-        classification = classify_email(subject, body)
-        is_hotel = classification.lower() == "hotel"
+        fieldnames = ['Email', 'Display Name', 'Hotel Name', 'Website',
+                     'Address', 'Coordinates', 'Contact', 'Subjects', 'Dates']
 
-        if is_hotel:
-            hotel_name = extract_hotel_name(subject, body)
-            hotel_details = get_hotel_details_from_google(hotel_name)
-            contact_data = {
-                "Email": message.get("From", "").split()[-1].strip("<>"),
-                "Display Name": message.get("From", "").split("<")[0].strip(),
-                "Hotel Name": hotel_name,
-                "Address": hotel_details.get("Address", ""),
-                "Coordinates": hotel_details.get("Coordinates", ""),
-                "Subjects": json.dumps([subject]),
-                "Dates": json.dumps([message.get("Date", "")])
-            }
-            contact = session.query(Contact).filter_by(email=contact_data["Email"]).first()
-            if not contact:
-                session.add(Contact(**contact_data))
-            else:
-                contact.subjects = json.dumps(json.loads(contact.subjects) + [subject])
-                contact.dates = json.dumps(json.loads(contact.dates) + [message.get("Date", "")])
+        mode = 'a' if append else 'w'
+        with open(output_file, mode, newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            if not append:
+                writer.writeheader()
 
-        session.add(ProcessedEmail(message_id=message_id, is_hotel_related=is_hotel))
-        session.commit()
-
-def process_mbox(mbox_path):
-    """Process emails from an MBOX file"""
-    mbox = mailbox.mbox(mbox_path, factory=lambda f: BytesParser(policy=policy.default).parse(f))
-    total = sum(1 for _ in mbox)
-    mbox.seek(0)
-    with tqdm(total=total, desc="Processing emails") as pbar:
-        for message in mbox:
-            process_email(message)
-            pbar.update(1)
-    mbox.close()
-
-def write_csv(output_file):
-    """Export contacts to CSV"""
-    with Session() as session:
-        contacts = session.query(Contact).all()
-        with open(output_file, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=["Email", "Display Name", "Hotel Name", "Address", "Coordinates", "Subjects", "Dates"])
-            writer.writeheader()
             for contact in contacts:
-                writer.writerow({
-                    "Email": contact.email,
-                    "Display Name": contact.display_name,
-                    "Hotel Name": contact.hotel_name,
-                    "Address": contact.address,
-                    "Coordinates": contact.coordinates,
-                    "Subjects": contact.subjects,
-                    "Dates": contact.dates
-                })
+                row = {
+                    'Email': contact.email,
+                    'Display Name': contact.display_name,
+                    'Hotel Name': contact.hotel_name,
+                    'Website': contact.website or '',
+                    'Address': contact.address or '',
+                    'Coordinates': contact.coordinates or '',
+                    'Contact': contact.contact or '',
+                    'Subjects': contact.subjects,
+                    'Dates': contact.dates
+                }
+                writer.writerow(row)
+
+        logger.info(f"Successfully wrote {len(contacts)} contacts to {output_file}")
+    except Exception as e:
+        logger.error(f"Error writing to CSV: {e}")
+
+def process_mbox_in_chunks(mbox_path, output_csv, chunk_size=25):
+    import tempfile
+    import shutil
+    import atexit
+    temp_dir = tempfile.mkdtemp()
+    atexit.register(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+    try:
+        mbox = mailbox.mbox(mbox_path)
+        total_messages = sum(1 for _ in mbox)
+        logger.info(f"Starting to process {total_messages} emails")
+        mbox.close()
+        mbox = mailbox.mbox(mbox_path)
+        current_chunk = []
+        chunk_number = 0
+        try:
+            for i, message in enumerate(mbox):
+                current_chunk.append(message)
+                if len(current_chunk) >= chunk_size or i == total_messages - 1:
+                    chunk_path = os.path.join(temp_dir, f"chunk_{chunk_number}.mbox")
+                    temp_mbox = mailbox.mbox(chunk_path)
+                    try:
+                        for msg in current_chunk:
+                            temp_mbox.add(msg)
+                        temp_mbox.close()
+                        process_mbox(chunk_path)
+                    finally:
+                        if os.path.exists(chunk_path):
+                            os.remove(chunk_path)
+                    current_chunk = []
+                    chunk_number += 1
+        finally:
+            mbox.close()
+    except Exception as e:
+        logger.error(f"Error processing mbox: {e}")
+        raise
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+### Service Check and Main Function
+
+def check_services():
+    """Verify Hugging Face API is accessible."""
+    try:
+        payload = {"inputs": "test"}
+        response = requests.post(HUGGINGFACE_API_URL, headers=HEADERS, json=payload, timeout=10)
+        response.raise_for_status()
+        result = response.json()
+        if result and isinstance(result, list) and "generated_text" in result[0]:
+            logger.info("✓ Hugging Face API is running and accessible")
+            return True
+        else:
+            logger.error(f"Hugging Face API returned unexpected response: {result}")
+            return False
+    except Exception as e:
+        logger.error(f"× Hugging Face error: {str(e)}")
+        logger.error("Check: 1. Internet connection, 2. HUGGINGFACE_API_TOKEN in .env")
+        return False
 
 def main():
-    """Main function"""
-    if not test_huggingface_connection():
-        logger.error("Cannot connect to Hugging Face API. Exiting.")
-        return
-    process_mbox(config.MBOX_FILE)
-    write_csv(config.HUGGINGFACE_OUTPUT_CSV)
-    logger.info("Processing complete!")
+    """Main entry point for the email processor application."""
+    logger.info("Starting email processing job")
+    try:
+        if not check_services():
+            logger.error("Hugging Face API unavailable. Check configuration.")
+            return
+        process_mbox_in_chunks(config.MBOX_FILE, config.OUTPUT_CSV)
+        with Session() as session:
+            write_csv(session, config.OUTPUT_CSV)
+        logger.info("Email processing job completed successfully")
+    except Exception as e:
+        logger.error(f"Fatal error in main: {e}")
+        raise
 
 if __name__ == "__main__":
     main()
