@@ -30,6 +30,7 @@ class AppConfig:
         self.HUGGINGFACE_API_TOKEN: str = os.getenv("HUGGINGFACE_API_TOKEN")
         self.HUGGINGFACE_MODEL: str = os.getenv("HUGGINGFACE_MODEL", "gpt2")
         self.OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY")
+        self.OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "gpt2")
         self.GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY")
 
         # Log critical configuration values

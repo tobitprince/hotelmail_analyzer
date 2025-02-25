@@ -5,7 +5,7 @@ config = AppConfig()
 
 # Your OpenRouter API key
 API_TOKEN = config.OPENROUTER_API_KEY # Your actual key
-
+OPENROUTER_MODEL = config.OPENROUTER_MODEL
 # OpenRouter API endpoint
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
@@ -18,7 +18,7 @@ headers = {
 def get_response(user_input):
     # Payload with system prompt
     payload = {
-        "model": "google/gemini-2.0-pro-exp-02-05:free",
+        "model": f"{OPENROUTER_MODEL}",
         "messages": [
             {"role": "system", "content": "You are a helpful assistant. Always respond clearly and concisely."},
             {"role": "user", "content": user_input}

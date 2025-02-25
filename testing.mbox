@@ -1,104 +1,175 @@
-From MAILER-DAEMON Mon Feb 17 10:00:00 2025
-Return-Path: <bouncing-email@example.com>
+From MAILER-DAEMON Tue Feb 25 10:00:00 2025
+Return-Path: <reservations@nair obisapphire.com>
 Delivered-To: user@example.com
-Received: by mail.example.com with LMTP id ABC1234 for <user@example.com>; Mon, 17 Feb 2025 10:00:00 +0000
-Date: Mon, 17 Feb 2025 10:00:00 +0300
-From: "The Sarova Stanley" <reservations@sarovastanley.com>
+Received: by mail.example.com with SMTP id abc123; Tue, 25 Feb 2025 10:00:00 +0300
+Date: Tue, 25 Feb 2025 10:00:00 +0300
+From: Sapphire Hotel Nairobi <reservations@nairobisapphire.com>
 To: user@example.com
-Subject: Booking Confirmation - Sarova Stanley, Nairobi
-Message-ID: <b271e528-68da-42ba-88b7-6d87214a1412@example.com>
+Subject: Booking Confirmation - Sapphire Hotel Nairobi
+Message-ID: <1234567890@nairobisapphire.com>
+Content-Type: text/plain; charset="UTF-8"
 
-Dear User,
+Dear Guest,
 
-Thank you for your reservation at The Sarova Stanley in Nairobi. We confirm your booking from March 10th to March 15th. We look forward to welcoming you to experience our luxurious accommodations and exceptional service.
+Thank you for booking with Sapphire Hotel Nairobi. Your reservation is confirmed for March 1st to March 5th, 2025. We look forward to welcoming you!
+
+Details:
+- Check-in: March 1st, 2025
+- Check-out: March 5th, 2025
+- Room Type: Deluxe Suite
+
+Contact us at reservations@nairobisapphire.com or +254 712 345 678 for any inquiries.
 
 Best regards,
-The Sarova Stanley Team
-www.sarovahotels.com
+Sapphire Hotel Nairobi Team
+https://www.nairobisapphire.com
 
-From MAILER-DAEMON Mon Feb 17 10:05:00 2025
-Return-Path: <bouncing-email@example.com>
+---
+
+From MAILER-DAEMON Tue Feb 25 10:05:00 2025
+Return-Path: <events@hospitalityevents.co.ke>
 Delivered-To: user@example.com
-Received: by mail.example.com with LMTP id DEF5678 for <user@example.com>; Mon, 17 Feb 2025 10:05:00 +0000
-Date: Mon, 17 Feb 2025 10:05:00 +0300
-From: "Kenya Airways" <info@kenya-airways.com>
+Received: by mail.example.com with SMTP id def456; Tue, 25 Feb 2025 10:05:00 +0300
+Date: Tue, 25 Feb 2025 10:05:00 +0300
+From: Events Team <events@hospitalityevents.co.ke>
 To: user@example.com
-Subject: Your Flight Itinerary
-Message-ID: <01d1540f-ad47-4723-b70b-670857f88d9a@example.com>
+Subject: Fwd: Hospitality Expo at Coral Beach Resort
+Message-ID: <987654321@hospitalityevents.co.ke>
+Content-Type: multipart/alternative; boundary="boundary123"
 
-Dear User,
+--boundary123
+Content-Type: text/plain; charset="UTF-8"
 
-Attached is your flight itinerary for your upcoming trip.
+---------- Forwarded message ---------
+From: Jane Doe <jane.doe@eventplanner.co.ke>
+Date: Mon, 24 Feb 2025 15:00:00 +0300
+Subject: Hospitality Expo at Coral Beach Resort
+To: events@hospitalityevents.co.ke
 
-Sincerely,
-Kenya Airways
+Dear Team,
 
-From MAILER-DAEMON Mon Feb 17 10:10:00 2025
-Return-Path: <bouncing-email@example.com>
-Delivered-To: user@example.com
-Received: by mail.example.com with LMTP id GHI9012 for <user@example.com>; Mon, 17 Feb 2025 10:10:00 +0000
-Date: Mon, 17 Feb 2025 10:10:00 +0300
-From: "Fairmont The Norfolk" <reservations@fairmont.com>
-To: user@example.com
-Subject: Special Offer at Fairmont The Norfolk, Nairobi
-Message-ID: <cdc36398-d8e2-49d4-b075-c8242feb9b2f@example.com>
-
-Hi User,
-
-Enjoy a luxurious stay at the iconic Fairmont The Norfolk in Nairobi. Book now and receive a complimentary upgrade!
-
-Sincerely,
-The Fairmont The Norfolk Team
-www.fairmont.com/norfolk-hotel-nairobi/
-
-From MAILER-DAEMON Mon Feb 17 10:15:00 2025
-Return-Path: <bouncing-email@example.com>
-Delivered-To: user@example.com
-Received: by mail.example.com with LMTP id JKL3456 for <user@example.com>; Mon, 17 Feb 2025 10:15:00 +0000
-Date: Mon, 17 Feb 2025 10:15:00 +0300
-From: "Safaricom" <noreply@safaricom.co.ke>
-To: user@example.com
-Subject: Your Safaricom Bill
-Message-ID: <a31e9bd4-31b1-4a5f-9c42-95876db9ae18@example.com>
-
-Dear User,
-
-Please find your latest Safaricom bill attached.
-
-Sincerely,
-Safaricom
-
-From MAILER-DAEMON Mon Feb 17 10:20:00 2025
-Return-Path: <bouncing-email@example.com>
-Delivered-To: user@example.com
-Received: by mail.example.com with LMTP id MNO7890 for <user@example.com>; Mon, 17 Feb 2025 10:20:00 +0000
-Date: Mon, 17 Feb 2025 10:20:00 +0300
-From: "Mara Serena Safari Lodge" <info@serenahotels.com>
-To: user@example.com
-Subject: Experience the Masai Mara at Mara Serena Safari Lodge
-Message-ID: <1c7972d0-396a-4c94-9e50-71d5d862f82f@example.com>
-
-Hi User,
-
-Discover the wonders of the Masai Mara with a stay at Mara Serena Safari Lodge. Book your safari adventure today!
+You're invited to the Hospitality Expo 2025 at Coral Beach Resort, Mombasa, from March 10th to 12th.
+Venue: Coral Beach Resort, Mombasa
+Website: https://www.coralbeachresort.co.ke
+RSVP to jane.doe@eventplanner.co.ke by March 1st.
 
 Best,
-The Serena Hotels Team
-www.serenahotels.com/mara
+Jane Doe
+Event Planner
 
-From MAILER-DAEMON Mon Feb 17 10:25:00 2025
-Return-Path: <bouncing-email@example.com>
+--
+Events Team
+Hospitality Events Kenya
+
+--boundary123
+Content-Type: text/html; charset="UTF-8"
+
+<html>
+<body>
+<p>---------- Forwarded message ---------</p>
+<p>From: <b>Jane Doe</b> &lt;jane.doe@eventplanner.co.ke&gt;<br>
+Date: Mon, 24 Feb 2025 15:00:00 +0300<br>
+Subject: Hospitality Expo at Coral Beach Resort<br>
+To: events@hospitalityevents.co.ke</p>
+
+<p>Dear Team,</p>
+<p>You’re invited to the Hospitality Expo 2025 at <b>Coral Beach Resort, Mombasa</b>, from March 10th to 12th. This event will feature top hotels and suppliers.</p>
+<p><b>Venue:</b> Coral Beach Resort, Mombasa<br>
+<b>Contact:</b> info@coralbeachresort.co.ke<br>
+<b>Website:</b> <a href="https://www.coralbeachresort.co.ke">https://www.coralbeachresort.co.ke</a></p>
+<p>RSVP to <a href="mailto:jane.doe@eventplanner.co.ke">jane.doe@eventplanner.co.ke</a> by March 1st.</p>
+<p>Best,<br>Jane Doe<br>Event Planner</p>
+<hr>
+<p>Events Team<br>Hospitality Events Kenya</p>
+</body>
+</html>
+
+--boundary123--
+
+---
+
+From MAILER-DAEMON Tue Feb 25 10:10:00 2025
+Return-Path: <marketing@serenahotels.com>
 Delivered-To: user@example.com
-Received: by mail.example.com with LMTP id PQR1234 for <user@example.com>; Mon, 17 Feb 2025 10:25:00 +0000
-Date: Mon, 17 Feb 2025 10:25:00 +0300
-From: "Jumia Kenya" <noreply@jumia.co.ke>
+Received: by mail.example.com with SMTP id ghi789; Tue, 25 Feb 2025 10:10:00 +0300
+Date: Tue, 25 Feb 2025 10:10:00 +0300
+From: Serena Hotels <marketing@serenahotels.com>
 To: user@example.com
-Subject: Great Deals on Jumia!
-Message-ID: <94dc967a-25ac-4ef4-ab83-b222a59d3727@example.com>
+Subject: Special Offer at Amboseli Serena Lodge
+Message-ID: <456789123@serenahotels.com>
+Content-Type: text/plain; charset="UTF-8"
 
-Dear User,
+Hello,
 
-Check out the latest deals and offers on Jumia Kenya!
+Enjoy a 20% discount at Amboseli Serena Lodge this March! Book now and experience luxury amidst the savannah.
 
-Thanks,
-Jumia Kenya
+Offer valid: March 1st - March 31st, 2025
+Contact: reservations@serenahotels.com
+Phone: +254 732 123 456
+Website: https://www.serenahotels.com/amboseli
+
+Best regards,
+Serena Hotels Marketing Team
+
+---
+
+From MAILER-DAEMON Tue Feb 25 10:15:00 2025
+Return-Path: <noreply@airkenya.com>
+Delivered-To: user@example.com
+Received: by mail.example.com with SMTP id jkl012; Tue, 25 Feb 2025 10:15:00 +0300
+Date: Tue, 25 Feb 2025 10:15:00 +0300
+From: Air Kenya <noreply@airkenya.com>
+To: user@example.com
+Subject: Flight Confirmation - Nairobi to Mombasa
+Message-ID: <321654987@airkenya.com>
+Content-Type: text/plain; charset="UTF-8"
+
+Dear Passenger,
+
+Your flight from Nairobi to Mombasa is confirmed.
+
+Flight Details:
+- Date: March 2nd, 2025
+- Departure: 09:00 AM
+- Arrival: 10:00 AM
+
+For support, contact support@airkenya.com or +254 700 987 654.
+
+Safe travels,
+Air Kenya Team
+
+---
+
+From MAILER-DAEMON Tue Feb 25 10:20:00 2025
+Return-Path: <john.doe@gmail.com>
+Delivered-To: user@example.com
+Received: by mail.example.com with SMTP id mno345; Tue, 25 Feb 2025 10:20:00 +0300
+Date: Tue, 25 Feb 2025 10:20:00 +0300
+From: John Doe <john.doe@gmail.com>
+To: user@example.com
+Subject: Fwd: Inquiry About Lake Nakuru Lodge
+Message-ID: <789456123@gmail.com>
+Content-Type: text/plain; charset="UTF-8"
+
+Hi,
+
+I followed up on our trip plans. Here’s the response from Lake Nakuru Lodge.
+
+Best,
+John
+
+---------- Forwarded message ---------
+From: Lake Nakuru Lodge <info@lakenakurulodge.co.ke>
+Date: Mon, 24 Feb 2025 14:30:00 +0300
+Subject: Inquiry About Lake Nakuru Lodge
+To: john.doe@gmail.com
+
+Dear John,
+
+Thank you for your inquiry. We have availability from March 15th to March 20th, 2025. Rates start at KES 15,000 per night.
+
+Contact us at info@lakenakurulodge.co.ke or +254 723 456 789 for bookings.
+Visit us at https://www.lakenakurulodge.co.ke.
+
+Regards,
+Lake Nakuru Lodge Team

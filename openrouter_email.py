@@ -1,31 +1,3 @@
-"""
-Email Processor for Hotel-Related Communications
-
-This module processes MBOX email files to identify and extract information about hotel-related
-communications. It uses OpenRouter with Dolphin 3.0 R1 Mistral 24B for email classification and
-the Google Places API for fetching additional hotel details.
-
-Key Features:
-- Processes large MBOX files in manageable chunks
-- Uses AI for intelligent email classification
-- Extracts hotel names and contact information
-- Integrates with Google Places API
-- Maintains a SQLite database
-- Exports results to CSV
-- Supports batch processing for efficiency
-
-Dependencies:
-- OpenRouter API key (free tier)
-- Google Places API key
-- Python packages: sqlalchemy, requests, python-decouple, tqdm, etc.
-
-Environment Variables:
-- MBOX_FILE: Path to the MBOX file
-- OUTPUT_CSV: Path for the output CSV file
-- GOOGLE_PLACES_API_KEY: Google Places API key
-- OPENROUTER_API_KEY: OpenRouter API key
-"""
-
 import os
 import mailbox
 import re
@@ -39,7 +11,7 @@ import time
 import tempfile
 from email.parser import BytesParser
 from email.utils import getaddresses
-from decouple import config
+from decouple import config as decouple_config
 from tqdm import tqdm
 from sqlalchemy import create_engine, Column, String, Integer, DateTime, Text, Boolean
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -47,23 +19,21 @@ from sqlalchemy.exc import SQLAlchemyError
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from sqlalchemy.pool import QueuePool
 from contextlib import contextmanager
-
+from bs4 import BeautifulSoup
 from config import AppConfig
 from log_config import setup_logging
 
-# Initialize configuration and logging
+# def setup_logging():
+#     logging.basicConfig(level=logging.DEBUG)  # Enable DEBUG logging
+#     return logging.getLogger(__name__)
+
 logger = setup_logging()
-config = AppConfig()
 
 # OpenRouter API setup
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
-OPENROUTER_API_KEY = config.OPENROUTER_API_KEY
-if not OPENROUTER_API_KEY:
-    raise ValueError("OPENROUTER_API_KEY is missing from environment variables")
-
 HEADERS = {
-    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-    "Content-Type": "application/json"
+    "Content-Type": "application/json",
+    "X-Title": "Email Processor for Hotel Related Communications",
 }
 
 # Database setup
@@ -77,7 +47,6 @@ Session = sessionmaker(bind=engine)
 
 @contextmanager
 def get_db_session():
-    """Context manager for database sessions."""
     session = Session()
     try:
         yield session
@@ -106,15 +75,44 @@ class Contact(Base):
     address = Column(String)
     coordinates = Column(String)
     contact = Column(String)
-    subjects = Column(Text)  # Stored as JSON array
-    dates = Column(Text)     # Stored as JSON array
+    subjects = Column(Text)
+    dates = Column(Text)
 
 Base.metadata.create_all(engine)
 
 ### Utility Functions
+def extract_emails_from_body(body):
+    email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+    return re.findall(email_pattern, body)
+
+def determine_hotel_email(hotel_name, emails, website):
+    hotel_words = [word.lower() for word in hotel_name.split() if word.lower() not in ['hotel', 'resort', 'inn', 'lodge']]
+    for email in emails:
+        domain = email.split('@')[1].lower()
+        if any(word in domain for word in hotel_words):
+            logger.info(f"Found hotel email in body: {email}")
+            return email
+    if website:
+        try:
+            response = requests.get(website, timeout=10)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, 'html.parser')
+            page_text = soup.get_text()
+            page_emails = extract_emails_from_body(page_text)
+            for email in page_emails:
+                domain = email.split('@')[1].lower()
+                if any(word in domain for word in hotel_words):
+                    logger.info(f"Found hotel email on website: {email}")
+                    return email
+            if page_emails:
+                logger.info(f"No matching email found; using first email from website: {page_emails[0]}")
+                return page_emails[0]
+        except Exception as e:
+            logger.error(f"Error scraping website {website}: {e}")
+    logger.warning(f"No hotel email found for {hotel_name}")
+    return None
 
 def get_total_emails(mbox_path):
-    """Count total emails in the MBOX file."""
     try:
         if not os.path.exists(mbox_path):
             print(f"Error: Mbox file not found at {mbox_path}")
@@ -139,7 +137,6 @@ def get_total_emails(mbox_path):
         return 0
 
 def is_email_processed(session, message_id):
-    """Check if an email has already been processed."""
     if not message_id:
         return False
     message_id = message_id.strip()
@@ -150,7 +147,6 @@ def is_email_processed(session, message_id):
         return False
 
 def save_processed_email(session, message_id, is_hotel=False, error=None):
-    """Save processed email details to the database."""
     try:
         existing = session.query(ProcessedEmail).filter(ProcessedEmail.message_id == message_id.strip()).first()
         if existing:
@@ -171,20 +167,14 @@ def save_processed_email(session, message_id, is_hotel=False, error=None):
         session.rollback()
 
 def save_contact(session, contact_data):
-    """Save or update contact information in the database."""
     try:
         email = contact_data.get("Email", "").lower().strip()
         if not email:
             logger.error("Attempted to save contact without email address")
             return None
-
-        display_name = contact_data.get("Display Name", "").strip()
-        if not display_name:
-            display_name = email.split('@')[0].replace('.', ' ').title()
-
+        display_name = contact_data.get("Display Name", "").strip() or email.split('@')[0].replace('.', ' ').title()
         subjects = list(contact_data.get("Subjects", set()))
         dates = list(contact_data.get("Dates", set()))
-
         contact = session.query(Contact).filter_by(email=email).first()
         if not contact:
             contact = Contact(
@@ -206,12 +196,10 @@ def save_contact(session, contact_data):
                 contact.address = contact_data.get("Address") or contact.address
                 contact.coordinates = contact_data.get("Coordinates") or contact.coordinates
                 contact.contact = contact_data.get("Contact") or contact.contact
-
             existing_subjects = set(json.loads(contact.subjects)) if contact.subjects else set()
             existing_dates = set(json.loads(contact.dates)) if contact.dates else set()
             contact.subjects = json.dumps(list(existing_subjects | set(subjects)))
             contact.dates = json.dumps(list(existing_dates | set(dates)))
-
         session.commit()
         logger.info(f"Successfully saved/updated contact: {email}")
         return contact
@@ -221,21 +209,16 @@ def save_contact(session, contact_data):
         return None
 
 ### OpenRouter API Functions
-
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=4, max=10),
-    retry=retry_if_exception_type(requests.exceptions.HTTPError)
-)
-def query_openrouter_batch(prompts):
-    """Query OpenRouter API with batched prompts."""
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10), retry=retry_if_exception_type(requests.exceptions.HTTPError))
+def query_openrouter_batch(prompts, config):
     if not prompts:
         return []
-
     responses = []
+    headers = HEADERS.copy()
+    headers["Authorization"] = f"Bearer {config.OPENROUTER_API_KEY}"
     for prompt in prompts:
         payload = {
-            "model": "google/gemini-2.0-pro-exp-02-05:free",
+            "model": config.OPENROUTER_MODEL,
             "messages": [
                 {"role": "system", "content": "You are a helpful assistant. Provide concise responses in JSON format only, no extra text."},
                 {"role": "user", "content": prompt}
@@ -245,10 +228,10 @@ def query_openrouter_batch(prompts):
             "top_p": 0.95
         }
         try:
-            response = requests.post(OPENROUTER_API_URL, headers=HEADERS, json=payload, timeout=10)
+            response = requests.post(OPENROUTER_API_URL, headers=headers, json=payload, timeout=10)
             response.raise_for_status()
             result = response.json()
-            logger.debug(f"Full OpenRouter response: {result}")  # Log full response for debugging
+            logger.debug(f"Full OpenRouter response: {result}")
             if "choices" in result and result["choices"]:
                 content = result["choices"][0]["message"]["content"]
                 responses.append({"generated_text": content})
@@ -263,21 +246,23 @@ def query_openrouter_batch(prompts):
             responses.append(None)
     return responses
 
-def classify_email(subject, body):
-    """Classify an email as hotel-related or not using OpenRouter."""
+def classify_email(subject, body, config):
     logger.info(f"Entering classify_email with subject: '{subject}'")
     prompt = (
-        "Classify this email as 'Hotel' if it involves hotel bookings, confirmations, offers, or stays at hotels, lodges, or camps; otherwise 'Other'. "
-        "Return ONLY a JSON object like {\"classification\": \"Hotel\"} or {\"classification\": \"Other\"}. No extra text or formatting.\n\n"
+        "Classify this email as 'Hotel' if it discusses hotel bookings, offers, events, "
+        "or mentions hotels in a business context; otherwise, 'Other.' "
+        "Return ONLY a JSON object like {\"classification\": \"Hotel\"} or {\"classification\": \"Other\"}. "
+        "No extra text or formatting.\n\n"
         "Examples:\n"
         "- Subject: 'Booking Confirmation - Sarova Stanley', Body: 'Your room is confirmed...' → {\"classification\": \"Hotel\"}\n"
         "- Subject: 'Your Flight Itinerary', Body: 'Attached is your flight...' → {\"classification\": \"Other\"}\n"
-        "- Subject: 'Special Offer at Fairmont The Norfolk', Body: 'Enjoy a luxurious stay...' → {\"classification\": \"Hotel\"}\n\n"
+        "- Subject: 'Shukran Invitation to Exhibit at the Third Regional Hospitality & Tourism Leadership Summit 2025', "
+        "Body: 'This prestigious event will take place from 12th to 14th March 2025 at Hotel Sapphire...' → {\"classification\": \"Hotel\"}\n\n"
         f"Subject: {subject}\n"
         f"Body: {body}"
     )
     try:
-        result = query_openrouter_batch([prompt])
+        result = query_openrouter_batch([prompt], config)
         if result and result[0]:
             generated_text = result[0].get("generated_text", "").strip()
             logger.info(f"OpenRouter raw response for subject '{subject}': '{generated_text}'")
@@ -301,8 +286,7 @@ def classify_email(subject, body):
         logger.error(f"Error classifying email with OpenRouter for subject '{subject}': {e}")
         return "Other"
 
-def extract_hotel_name(subject, body):
-    """Extract hotel names from email content using OpenRouter."""
+def extract_hotel_name(subject, body, config):
     prompt = (
         f"Extract the name of any hotel, lodge, or camp mentioned in this email. "
         "Return ONLY a JSON object with one key 'hotel_name', e.g., {\"hotel_name\": \"Sarova Stanley\"} or {\"hotel_name\": \"\"}. No extra text or formatting.\n\n"
@@ -310,7 +294,7 @@ def extract_hotel_name(subject, body):
         f"Body: {body}"
     )
     try:
-        result = query_openrouter_batch([prompt])
+        result = query_openrouter_batch([prompt], config)
         if result and result[0]:
             generated_text = result[0].get("generated_text", "").strip()
             logger.info(f"OpenRouter raw response for hotel name extraction, subject '{subject}': '{generated_text}'")
@@ -335,10 +319,8 @@ def extract_hotel_name(subject, body):
         return ""
 
 ### Google Places API Function
-
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
-def get_hotel_details_from_google(hotel_name):
-    """Fetch hotel details from Google Places API."""
+def get_hotel_details_from_google(hotel_name, config):
     if not hotel_name:
         logger.warning("Empty hotel name provided")
         return {}
@@ -347,11 +329,9 @@ def get_hotel_details_from_google(hotel_name):
         logger.debug(f"Querying Google Places API with: {query}")
         url = "https://maps.googleapis.com/maps/api/place/textsearch/json"
         api_key = config.GOOGLE_PLACES_API_KEY
-        logger.debug(f"Using API key: {api_key[:10]}...")
-        params = {
-            'query': query,
-            'key': api_key
-        }
+        logger.debug(f"Using API key: {api_key[:5]}...")
+        params = {'query': query, 'key': api_key}
+        logger.debug(f"Sending request to {url} with params: {params}")
         response = requests.get(url, params=params, timeout=30)
         response.raise_for_status()
         results = response.json()
@@ -360,10 +340,11 @@ def get_hotel_details_from_google(hotel_name):
             logger.error(f"Google Places API request denied: {results.get('error_message')}")
             return {}
         if results.get('status') != 'OK' or not results.get('results'):
-            logger.warning(f"No results found for hotel: {hotel_name}")
+            logger.warning(f"No results found for hotel: {hotel_name}, status: {results.get('status')}")
             return {}
         place = results['results'][0]
         if 'place_id' not in place:
+            logger.info(f"No place_id found for {hotel_name}, using basic data")
             return {
                 "Hotel Name": place.get('name', hotel_name),
                 "Website": "",
@@ -378,6 +359,7 @@ def get_hotel_details_from_google(hotel_name):
             'fields': 'name,website,formatted_address,geometry,formatted_phone_number',
             'key': api_key
         }
+        logger.debug(f"Fetching details with place_id: {place_id}")
         details_response = requests.get(details_url, params=details_params, timeout=30)
         details_response.raise_for_status()
         details = details_response.json()['result']
@@ -389,27 +371,17 @@ def get_hotel_details_from_google(hotel_name):
             "Coordinates": f"{details['geometry']['location']['lat']},{details['geometry']['location']['lng']}",
             "Contact": details.get('formatted_phone_number', '')
         }
+    except requests.exceptions.RequestException as e:
+        logger.error(f"API request failed: {str(e)}")
+        return {"Hotel Name": hotel_name, "Website": "", "Address": "", "Coordinates": "", "Contact": ""}
     except Exception as e:
-        logger.error(f"Error fetching hotel details: {e}")
+        logger.error(f"Unexpected error fetching hotel details: {e}")
         return {"Hotel Name": hotel_name, "Website": "", "Address": "", "Coordinates": "", "Contact": ""}
 
 ### Email Processing Functions
-
-def extract_addresses_and_names(header_value):
-    """Extract email addresses and display names from headers."""
-    addresses = []
-    if header_value:
-        parsed = getaddresses([header_value])
-        for name, email in parsed:
-            if email:
-                addresses.append((email, name.strip()))
-    return addresses
-
-def process_emails_in_batch(emails):
-    """Process a batch of emails to classify and extract hotel-related information."""
+def process_emails_in_batch(emails, config):
     if not emails:
         return
-
     with Session() as session:
         for message in emails:
             try:
@@ -417,98 +389,86 @@ def process_emails_in_batch(emails):
                 body = ""
                 if message.is_multipart():
                     for part in message.walk():
-                        if part.get_content_type() == "text/plain":
+                        content_type = part.get_content_type()
+                        if content_type == "text/plain":
                             try:
-                                body = part.get_content()
-                                break
+                                body += part.get_payload(decode=True).decode('utf-8', errors='ignore')
                             except UnicodeDecodeError:
                                 continue
+                        elif content_type == "text/html":
+                            html = part.get_payload(decode=True).decode('utf-8', errors='ignore')
+                            soup = BeautifulSoup(html, 'html.parser')
+                            body += soup.get_text()
                 else:
                     try:
-                        body = message.get_content()
+                        body = message.get_payload(decode=True).decode('utf-8', errors='ignore')
                     except UnicodeDecodeError:
                         pass
-
-                classification = classify_email(subject, body)
+                classification = classify_email(subject, body, config)
                 logger.info(f"Classified email - Subject: '{subject}', Classification: '{classification}'")
-
                 is_hotel = classification.lower() == "hotel"
                 if is_hotel:
-                    process_hotel_email(message)
-
+                    process_hotel_email(message, config)
                 msg_id = message.get("Message-ID", "")
-                save_processed_email(
-                    session,
-                    msg_id,
-                    is_hotel=is_hotel
-                )
+                save_processed_email(session, msg_id, is_hotel=is_hotel)
             except Exception as e:
                 msg_id = message.get("Message-ID", "")
                 error_msg = f"Error processing email: {str(e)}"
                 logger.error(error_msg)
-                save_processed_email(
-                    session,
-                    msg_id,
-                    is_hotel=False,
-                    error=error_msg
-                )
+                save_processed_email(session, msg_id, is_hotel=False, error=error_msg)
 
-def process_hotel_email(message):
-    """Process a hotel-related email and extract contact information."""
+def process_hotel_email(message, config):
     try:
-        contacts = {}
         subject = message.get("subject", "").strip()
         date = message.get("date", "").strip()
-
         content = ""
         if message.is_multipart():
             for part in message.walk():
-                if part.get_content_type() == "text/plain":
-                    content = part.get_payload(decode=True).decode('utf-8', errors='ignore')
-                    break
+                content_type = part.get_content_type()
+                if content_type == "text/plain":
+                    content += part.get_payload(decode=True).decode('utf-8', errors='ignore')
+                elif content_type == "text/html":
+                    html = part.get_payload(decode=True).decode('utf-8', errors='ignore')
+                    soup = BeautifulSoup(html, 'html.parser')
+                    content += soup.get_text()
         else:
             content = message.get_payload(decode=True).decode('utf-8', errors='ignore')
-
-        extracted_name = extract_hotel_name(subject, content)
+        extracted_name = extract_hotel_name(subject, content, config)
         logger.info(f"Processing email with subject '{subject}', extracted hotel name: '{extracted_name}'")
-
         hotel_details = {}
         if extracted_name:
-            hotel_details = get_hotel_details_from_google(extracted_name)
+            logger.debug(f"Calling Google Places API for: {extracted_name}")
+            hotel_details = get_hotel_details_from_google(extracted_name, config)
             logger.debug(f"Retrieved hotel details: {hotel_details}")
-
-        with get_db_session() as session:
-            for header in ["From", "To", "Cc", "Bcc"]:
-                addresses = message.get(header, "")
-                if addresses:
-                    for display_name, email in extract_addresses_and_names(addresses):
-                        if not email:
-                            continue
-
-                        contact_data = {
-                            "Email": email.lower(),
-                            "Display Name": display_name,
-                            "Hotel Name": extracted_name,
-                            "Website": hotel_details.get("Website", ""),
-                            "Address": hotel_details.get("Address", ""),
-                            "Coordinates": hotel_details.get("Coordinates", ""),
-                            "Contact": hotel_details.get("Contact", ""),
-                            "Subjects": {subject} if subject else set(),
-                            "Dates": {date} if date else set()
-                        }
-
-                        saved_contact = save_contact(session, contact_data)
-                        if saved_contact:
-                            contacts[email] = contact_data
-
-        logger.info(f"Processed hotel email with {len(contacts)} contacts")
-        return contacts
+        body_emails = extract_emails_from_body(content)
+        logger.info(f"Emails extracted from body: {body_emails}")
+        hotel_email = determine_hotel_email(extracted_name, body_emails, hotel_details.get("Website"))
+        if hotel_email:
+            contact_data = {
+                "Email": hotel_email.lower(),
+                "Display Name": extracted_name,
+                "Hotel Name": hotel_details.get("Hotel Name", extracted_name),
+                "Website": hotel_details.get("Website", ""),
+                "Address": hotel_details.get("Address", ""),
+                "Coordinates": hotel_details.get("Coordinates", ""),
+                "Contact": hotel_details.get("Contact", ""),
+                "Subjects": {subject} if subject else set(),
+                "Dates": {date} if date else set()
+            }
+            logger.debug(f"Contact data to save: {contact_data}")
+            with get_db_session() as session:
+                saved_contact = save_contact(session, contact_data)
+                if saved_contact:
+                    logger.info(f"Saved hotel contact: {hotel_email}")
+                    return {hotel_email: contact_data}
+        else:
+            logger.warning(f"No hotel email found for {extracted_name}")
+            return {}
     except Exception as e:
         logger.error(f"Error in process_hotel_email: {e}")
         return {}
 
-def process_mbox(mbox_path):
-    """Process the entire MBOX file in batches."""
+def process_mbox(mbox_path, config):
     contacts = {}
     total_emails = get_total_emails(mbox_path)
     mbox = mailbox.mbox(mbox_path, factory=lambda f: BytesParser(policy=policy.default).parse(f))
@@ -525,11 +485,11 @@ def process_mbox(mbox_path):
                         continue
                     current_batch.append(message)
                     if len(current_batch) >= config.BATCH_SIZE:
-                        process_emails_in_batch(current_batch)
+                        process_emails_in_batch(current_batch, config)
                         pbar.update(len(current_batch))
                         current_batch = []
                 if current_batch:
-                    process_emails_in_batch(current_batch)
+                    process_emails_in_batch(current_batch, config)
                     pbar.update(len(current_batch))
         except Exception as e:
             logger.error(f"Error processing mbox: {e}")
@@ -539,26 +499,21 @@ def process_mbox(mbox_path):
     return contacts
 
 def write_csv(session, output_file, append=False):
-    """Write contacts to CSV file."""
     try:
         contacts = session.query(Contact).all()
         if not contacts:
             logger.warning("No contacts to write to CSV")
             return
-
-        fieldnames = ['Email', 'Display Name', 'Hotel Name', 'Website',
-                     'Address', 'Coordinates', 'Contact', 'Subjects', 'Dates']
-
+        fieldnames = ['Email', 'Display Name', 'Hotel Name', 'Website', 'Address', 'Coordinates', 'Contact', 'Subjects', 'Dates']
         mode = 'a' if append else 'w'
         with open(output_file, mode, newline='', encoding='utf-8') as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             if not append:
                 writer.writeheader()
-
             for contact in contacts:
                 row = {
-                    'Email': contact.display_name.lower(),
-                    'Display Name': contact.email,
+                    'Email': contact.email,
+                    'Display Name': contact.display_name,
                     'Hotel Name': contact.hotel_name,
                     'Website': contact.website or '',
                     'Address': contact.address or '',
@@ -568,13 +523,11 @@ def write_csv(session, output_file, append=False):
                     'Dates': contact.dates
                 }
                 writer.writerow(row)
-
         logger.info(f"Successfully wrote {len(contacts)} contacts to {output_file}")
     except Exception as e:
         logger.error(f"Error writing to CSV: {e}")
 
-def process_mbox_in_chunks(mbox_path, output_csv, chunk_size=25):
-    """Process MBOX file in chunks to manage memory usage."""
+def process_mbox_in_chunks(mbox_path, output_csv, config, chunk_size=25):
     import tempfile
     import shutil
     import atexit
@@ -598,7 +551,7 @@ def process_mbox_in_chunks(mbox_path, output_csv, chunk_size=25):
                         for msg in current_chunk:
                             temp_mbox.add(msg)
                         temp_mbox.close()
-                        process_mbox(chunk_path)
+                        process_mbox(chunk_path, config)
                     finally:
                         if os.path.exists(chunk_path):
                             os.remove(chunk_path)
@@ -613,16 +566,12 @@ def process_mbox_in_chunks(mbox_path, output_csv, chunk_size=25):
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 ### Service Check and Main Function
-
-def check_services():
-    """Verify OpenRouter API is accessible."""
+def check_services(config):
     try:
-        payload = {
-            "model": "cognitivecomputations/dolphin3.0-r1-mistral-24b:free",
-            "messages": [{"role": "user", "content": "test"}],
-            "max_tokens": 5
-        }
-        response = requests.post(OPENROUTER_API_URL, headers=HEADERS, json=payload, timeout=10)
+        payload = {"model": "deepseek/deepseek-r1", "messages": [{"role": "user", "content": "test"}], "max_tokens": 5}
+        headers = HEADERS.copy()
+        headers["Authorization"] = f"Bearer {config.OPENROUTER_API_KEY}"
+        response = requests.post(OPENROUTER_API_URL, headers=headers, json=payload, timeout=10)
         response.raise_for_status()
         logger.info("✓ OpenRouter API is running and accessible")
         return True
@@ -632,13 +581,20 @@ def check_services():
         return False
 
 def main():
-    """Main entry point for the email processor application."""
     logger.info("Starting email processing job")
+    config = AppConfig()
+    logger.debug(f"Loaded GOOGLE_PLACES_API_KEY in main: {config.GOOGLE_PLACES_API_KEY[:5] if config.GOOGLE_PLACES_API_KEY else 'None'}...")
     try:
-        if not check_services():
+        if not check_services(config):
             logger.error("OpenRouter unavailable. Check configuration.")
             return
-        process_mbox_in_chunks(config.MBOX_FILE, config.OPENROUTER_OUTPUT_CSV)
+        if not config.GOOGLE_PLACES_API_KEY:
+            logger.error("GOOGLE_PLACES_API_KEY is missing.")
+            return
+        if not os.path.exists(config.MBOX_FILE):
+            logger.error(f"MBOX_FILE not found at {config.MBOX_FILE}.")
+            return
+        process_mbox_in_chunks(config.MBOX_FILE, config.OPENROUTER_OUTPUT_CSV, config)
         with Session() as session:
             write_csv(session, config.OPENROUTER_OUTPUT_CSV)
         logger.info("Email processing job completed successfully")
