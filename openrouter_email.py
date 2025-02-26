@@ -568,7 +568,7 @@ def process_mbox_in_chunks(mbox_path, output_csv, config, chunk_size=25):
 ### Service Check and Main Function
 def check_services(config):
     try:
-        payload = {"model": "deepseek/deepseek-r1", "messages": [{"role": "user", "content": "test"}], "max_tokens": 5}
+        payload = {"model": f"{config.OPENROUTER_MODEL}", "messages": [{"role": "user", "content": "test"}], "max_tokens": 5}
         headers = HEADERS.copy()
         headers["Authorization"] = f"Bearer {config.OPENROUTER_API_KEY}"
         response = requests.post(OPENROUTER_API_URL, headers=headers, json=payload, timeout=10)
